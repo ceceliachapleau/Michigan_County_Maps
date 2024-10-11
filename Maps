@@ -1,0 +1,223 @@
+library(readr)
+library(tigris)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(ggiraph)
+library(scales)
+library(RColorBrewer)
+library(tmap)
+library(mapview)
+library(mapboxapi)
+
+#creating michigan county map from US census geospatial data
+options(tigris_use_cache = TRUE)
+
+mi_counties_cb <- counties("MI", cb = TRUE)
+
+mi_cb_gg <- ggplot(mi_counties_cb) + 
+  geom_sf() + 
+  theme_void() + 
+  labs(title = "Michigan Counties")
+
+#Import your dataset with GEOID variable
+#Mine is named correct_county_data
+
+#merging michigan county map data with my data set by GEOID
+#creating labels for the interactive maps
+merge_map <- merge(mi_counties_cb, correct_county_data, by = "GEOID") %>%
+  mutate(tooltip = paste(NAME, Fatal_Overdose_Rate_Five, sep = ": ")) %>% 
+  mutate(race_tooltip = paste0(NAME, ", African American: ", percentblack, "%")) %>% 
+  mutate(overdose_label = paste0(Fatal_Overdose_Rate_Five, "%")) %>% 
+  mutate(percentblack_label = paste0(percentblack, "%"))
+
+#fatal overdose using ggplot
+ggplot(merge_map, aes(fill = Fatal_Overdose_Rate_Five)) +
+  geom_sf() +  
+  scale_fill_distiller(palette = "RdPu", 
+                       direction = 1)+
+  labs(title = "5-Year Average Fatal Overdose",
+       caption = " ",
+       fill = "Rate per 100,000 (2016-2020)") +
+  theme_void()
+
+#Fatal overdose rate using tmap
+tm_shape(merge_map) +
+  tm_polygons(col = "Fatal_Overdose_Rate_Five",
+              style = "cont",
+              palette = "RdPu",
+              title = "",
+              legend.hist = FALSE) + 
+  tm_layout(title = "Rate per 100k",
+            frame = FALSE,
+            main.title = "5 year fatal overdose rate",
+            main.title.size = 1,
+            legend.outside = TRUE,
+            legend.outside.size = .25)
+
+#uninsured populations with legend formated with %
+tm_shape(merge_map) +
+  tm_polygons(col = "uninsured",
+              style = "cont",
+              palette = "GnBu",
+              title = "",
+              legend.hist = FALSE) + 
+  tm_layout(title = "Uninsured Population",
+            frame = FALSE,
+            main.title = "Uninsured",
+            main.title.size = 1,
+            legend.format=list(fun=function(x) paste0(formatC(x, digits=0, format="f"), "%")),
+            legend.outside.size = .4,
+            legend.outside = TRUE) 
+
+#Mapping non fatal overdose rates to the background color and mapping poverty rate to squares on top of the map
+tm_shape(merge_map) +
+  tm_polygons(col = "Nonfatal_Overdose_Rate_Three",
+              style = "cont",
+              palette = "Oranges",
+              title = "",
+              legend.hist = FALSE) + 
+  tm_layout(title = "Nonfatal Overdoses per 100k",
+            frame = FALSE,
+            main.title = "Nonfatal overdose rate by poverty",
+            main.title.size = 1,
+            legend.outside = TRUE,
+            legend.outside.size = .6) +
+  tm_squares(col = "povertyrate",
+             size = .1,
+             style = "cont",
+             palette = "Greens",
+             legend.format=list(fun=function(x) paste0(formatC(x, digits=0, format="f"), "%")), #To add % to the legend
+             legend.size.show = TRUE,
+             title.col = "Poverty Rate")
+
+#Creating interactive maps with tmap
+tmap_mode("view")
+
+#five year overdose rate with program centers
+tm_shape(merge_map) +
+  tm_polygons(col = "Fatal_Overdose_Rate_Five",
+              style = "jenks",
+              n = 5,
+              palette = "Blues",
+              title = "",
+              legend.hist = TRUE) + 
+  tm_layout(title = "Rate per 100,000 (2016-2020)",
+            frame = FALSE,
+            main.title = "5-Year Average Fatal Overdose",
+            main.title.size = 1,
+            legend.outside = TRUE,
+            legend.hist.width = 5) +
+  tm_symbols(size = "program",
+             col = "orange", 
+             legend.col.show = FALSE,
+             size.max = 45,
+             legend.size.show = FALSE)
+
+#same map but with a hovertip showing the black population percentage 
+tm_shape(merge_map) +
+  tm_polygons(col = "Fatal_Overdose_Rate_Five",
+              style = "jenks",
+              n = 5,
+              palette = "Blues",
+              title = "Rate per 100,000 (2016-2020)",
+              legend.hist = TRUE,
+              id = "race_tooltip") + 
+  tm_layout(title = "5-Year Average Fatal Overdose",
+            frame = FALSE,
+            main.title = "",
+            main.title.size = 1,
+            legend.outside = TRUE,
+            legend.hist.width = 5) +
+  tm_symbols(size = "program",
+             col = "orange", 
+             legend.col.show = FALSE,
+             size.max = 35,
+             legend.size.show = FALSE,
+             id = "program") 
+
+#same map but static label showing percent black population 
+df_points_centroid <- merge_map %>% 
+  mutate(centroid = st_centroid(geometry)) %>% 
+  as.data.frame() %>% 
+  select(-geometry) %>% 
+  st_as_sf()
+
+tm_shape(merge_map) +
+  tm_polygons(col = "Fatal_Overdose_Rate_Five",
+              style = "jenks",
+              n = 5,
+              palette = "Blues",
+              title = "Rate per 100,000 (2016-2020)",
+              legend.hist = TRUE,
+              id = "race_tooltip") + 
+  tm_layout(title = "5-Year Average Fatal Overdose",
+            frame = FALSE,
+            main.title = "",
+            main.title.size = 1,
+            legend.outside = TRUE,
+            legend.hist.width = 5) +
+  tm_shape(df_points_centroid) +
+  tm_text("percentblack_label", size = .7)
+
+#For an interactive map
+mb_access_token("pk.eyJ1IjoiY2VjZWNoYXBsZWF1IiwiYSI6ImNsd3A3MDQ2bDJyNnUyaW5ydHVyN3g2NXcifQ.CicIXX1y3jqkH9zVyl5_oA",
+                install = TRUE, overwrite=TRUE)
+
+readRenviron("~/.Renviron")
+
+tiles <- get_static_tiles(location = merge_map,zoom = 10,style_id = "light-v9",username = "mapbox")
+
+#for 5 year average of fatal overdoses
+tm_shape(tiles) + 
+  tm_rgb() + 
+  tm_shape(merge_map) +
+  tm_polygons(col = "Fatal_Overdose_Rate_Five",
+              style = "jenks",
+              n = 5,
+              palette = "Purples",
+              title = "5-Year Average Fatal Overdose",
+              alpha = 0.7,
+              id = "NAME") +
+  tm_layout(main.title = "5-Year Average Fatal Overdose",
+            main.title.size = 1,
+            title = "Rate per 100,000 (2016-2020)",
+            legend.outside = TRUE) + 
+  tm_scale_bar(position = c("left", "bottom")) + 
+  tm_credits("(c) Mapbox, (c) OpenStreetMap ",
+             position = c("RIGHT", "TOP"))
+
+#trying another type of interactive map with ggiraph package
+library(ggiraph)
+library(scales)
+
+interactivemap <- ggplot(merge_map, aes(fill = Fatal_Overdose_Rate_Five)) + 
+  geom_sf_interactive(aes(tooltip = Fatal_Overdose_Rate_Five, data_id = GEOID), 
+                      size = 0.1) + 
+  scale_fill_viridis_c(option = "plasma") + 
+  labs(title = "5-Year Average Fatal Overdose",
+       caption = " ",
+       fill = "Rate per 100,000 (2016-2020)") + 
+  theme_void() 
+
+girafe(ggobj = interactivemap) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"), 
+                 opts_zoom(max = 10))
+
+merge_map_interactive <- merge_map %>%
+  mutate(tooltip = paste(NAME, Fatal_Overdose_Rate_Five, sep = ": "))
+
+#Graph with symbols showing the program centers
+interactivemap_both <- ggplot(merge_map_interactive, aes(fill = Fatal_Overdose_Rate_Five)) + 
+  geom_sf_interactive(aes(tooltip = tooltip, data_id = GEOID), 
+                      size = 0.1) + 
+  stat_sf_coordinates(aes(fill=program))+
+  scale_fill_viridis_c(option = "plasma") + 
+  labs(title = "5-Year Average Fatal Overdose",
+       caption = " ",
+       fill = "Rate per 100,000 (2016-2020)") + 
+  theme_void() 
+
+girafe(ggobj = interactivemap_both) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"), 
+                 opts_zoom(max = 10))
